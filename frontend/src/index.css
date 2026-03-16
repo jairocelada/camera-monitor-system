@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* v4.2 permite múltiples @import si los necesitas */
+/* @import "tailwindcss/preflight" layer(base); */
+/* @import "tailwindcss/utilities" layer(utilities); */
+
+@theme {
+  /* Colores personalizados */
+  --color-primary: #3b82f6;
+  --color-secondary: #64748b;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  
+  /* v4.2: Puedes agregar más propiedades */
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-gray-100 antialiased;
+  }
+}
+
+/* v4.2: Puedes usar @utility para clases personalizadas */
+@utility btn-primary {
+  @apply px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700;
+}
+
+@layer components {
+  .status-online {
+    @apply bg-green-500 animate-pulse;
+  }
+  .status-offline {
+    @apply bg-red-500;
+  }
+  .status-warning {
+    @apply bg-yellow-500 animate-pulse;
+  }
+}

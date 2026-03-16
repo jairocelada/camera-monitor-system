@@ -1,0 +1,92 @@
+# ==========================================
+# ETAPA 1: Build
+# ==========================================
+FROM node:24.14.0-alpine as builder
+
+WORKDIR /app
+
+COPY package*.json ./
+# Nuevo: npm ci es más rápido y seguro que npm install
+RUN npm ci --only=production
+
+COPY . .
+# Nuevo: Build optimizado con Vite 6
+RUN npm run build
+
+# ==========================================
+# ETAPA 2: Nginx 1.27
+# ==========================================
+FROM nginx:1.27.4-alpine
+
+# Copiar build de React
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Configuración nginx optimizada para SPAs y APIs
+RUN echo 'server { \
+    listen 80; \
+    server_name localhost; \
+    \
+    # Gzip compression \
+    gzip on; \
+    gzip_vary on; \
+    gzip_min_length 1024; \
+    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/javascript application/json; \
+    \
+    # Frontend (React) \
+    location / { \
+        root /usr/share/nginx/html; \
+        index index.html; \
+        try_files $uri $uri/ /index.html; \
+        \
+        # Cache estáticos \
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ { \
+            expires 1y; \
+            add_header Cache-Control "public, immutable"; \
+        } \
+    } \
+    \
+    # Healthcheck \
+    location /health { \
+        access_log off; \
+        return 200 "healthy\n"; \
+        add_header Content-Type text/plain; \
+    } \
+    \
+    # API Backend (proxy) \
+    location /api/ { \
+        proxy_pass http://backend:8000/; \
+        proxy_http_version 1.1; \
+        proxy_set_header Upgrade $http_upgrade; \
+        proxy_set_header Connection "upgrade"; \
+        proxy_set_header Host $host; \
+        proxy_set_header X-Real-IP $remote_addr; \
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; \
+        proxy_set_header X-Forwarded-Proto $scheme; \
+        \
+        # Timeouts \
+        proxy_connect_timeout 60s; \
+        proxy_send_timeout 60s; \
+        proxy_read_timeout 60s; \
+    } \
+    \
+    # WebSocket (si lo implementas) \
+    location /ws { \
+        proxy_pass http://backend:8000/ws; \
+        proxy_http_version 1.1; \
+        proxy_set_header Upgrade $http_upgrade; \
+        proxy_set_header Connection "upgrade"; \
+        proxy_set_header Host $host; \
+    } \
+}' > /etc/nginx/conf.d/default.conf
+
+# Nuevo: Configuración de seguridad adicional
+RUN echo 'server_tokens off; \
+    add_header X-Frame-Options "SAMEORIGIN" always; \
+    add_header X-Content-Type-Options "nosniff" always; \
+    add_header X-XSS-Protection "1; mode=block" always; \
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always; \
+' > /etc/nginx/conf.d/security.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

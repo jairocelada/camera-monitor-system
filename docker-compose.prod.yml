@@ -1,0 +1,310 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. POSTGRESQL 17.4 - Producción
+  # ==========================================
+  db:
+    image: postgres:17.4-alpine
+    container_name: camera_db_prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:5432:5432"              # Solo localhost por seguridad
+    volumes:
+      - /opt/camera-monitor/data/postgres:/var/lib/postgresql/data
+      - /opt/camera-monitor/backups:/backups
+    # Nuevo: Configuraciones de producción optimizadas
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=2621kB"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "max_connections=100"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ==========================================
+  # 2. REDIS 7.4 - Producción con ACLs
+  # ==========================================
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: camera_redis_prod
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - /opt/camera-monitor/data/redis:/data
+      - /opt/camera-monitor/config/redis.acl:/data/redis.acl:ro
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--maxmemory"
+      - "512mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--aclfile"
+      - "/data/redis.acl"
+      - "--requirepass"
+      - "${REDIS_PASSWORD}"                  # Nuevo: password obligatorio
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ==========================================
+  # 3. BACKEND - Python 3.13.1 Optimizado
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+      # Nuevo: Build secrets para seguridad
+      secrets:
+        - source: env_file
+          target: /run/secrets/.env
+    image: camera-backend:2026.03
+    container_name: camera_api_prod
+    restart: always
+    ports:
+      - "0.0.0.0:8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+      - WEB_CONCURRENCY=4                      # Nuevo: workers Uvicorn
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  # ==========================================
+  # 4. CELERY WORKERS - Escalables
+  # ==========================================
+  celery_worker:
+    image: camera-backend:2026.03
+    container_name: camera_worker_prod
+    restart: always
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - db
+      - redis
+    command:
+      - "celery"
+      - "-A"
+      - "celery_worker"
+      - "worker"
+      - "--loglevel=INFO"
+      - "--concurrency=4"
+      - "-Q"
+      - "celery,monitoring"
+      - "--prefetch-multiplier=1"
+      - "--max-tasks-per-child=1000"           # Nuevo: prevenir memory leaks
+      - "--time-limit=300"                     # Nuevo: 5 min max por tarea
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          memory: 256M
+    # Nuevo: Escalado automático (si usas Docker Swarm o Compose con deploy)
+    scale: 2                                   # 2 workers por defecto
+
+  # Segundo worker (para alta carga)
+  celery_worker_2:
+    image: camera-backend:2026.03
+    container_name: camera_worker_prod_2
+    restart: always
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+    depends_on:
+      - db
+      - redis
+    command:
+      - "celery"
+      - "-A"
+      - "celery_worker"
+      - "worker"
+      - "--loglevel=INFO"
+      - "--concurrency=4"
+      - "-Q"
+      - "celery,monitoring"
+      - "--prefetch-multiplier=1"
+      - "--max-tasks-per-child=1000"
+      - "--hostname=worker2@%h"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ==========================================
+  # 5. CELERY BEAT - Scheduler robusto
+  # ==========================================
+  celery_beat:
+    image: camera-backend:2026.03
+    container_name: camera_scheduler_prod
+    restart: always
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+    depends_on:
+      - db
+      - redis
+      - celery_worker
+    volumes:
+      - /opt/camera-monitor/data/celerybeat:/app/celerybeat-schedule
+    command:
+      - "celery"
+      - "-A"
+      - "celery_worker"
+      - "beat"
+      - "--loglevel=INFO"
+      - "--scheduler"
+      - "celery.beat.PersistentScheduler"
+      - "--max-interval=300"                   # Nuevo: chequeo cada 5 min max
+
+  # ==========================================
+  # 6. FRONTEND - Node 22 LTS Optimizado
+  # ==========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    image: camera-frontend:2026.03
+    container_name: camera_frontend_prod
+    restart: always
+    ports:
+      - "0.0.0.0:80:80"
+    depends_on:
+      - backend
+    # Nuevo: Healthcheck para nginx
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================
+  # 7. REVERSE PROXY - Nginx 1.27 (2026)
+  # ==========================================
+  nginx:
+    image: nginx:1.27.4-alpine               # ← Actualizado: última estable
+    container_name: camera_nginx_prod
+    restart: always
+    ports:
+      - "0.0.0.0:443:443"                      # Nuevo: HTTPS por defecto
+      - "0.0.0.0:80:80"
+    volumes:
+      - /opt/camera-monitor/config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/camera-monitor/config/ssl:/etc/nginx/ssl:ro
+      - /opt/camera-monitor/logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+
+  # ==========================================
+  # 8. MONITOREO - Prometheus + Grafana (Nuevo 2026)
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:v3.2.1              # ← Nuevo: métricas del sistema
+    container_name: camera_prometheus
+    restart: always
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - /opt/camera-monitor/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+  grafana:
+    image: grafana/grafana:11.5.2             # ← Nuevo: dashboards profesionales
+    container_name: camera_grafana
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - /opt/camera-monitor/config/grafana:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+
+volumes:
+  postgres_data:
+  redis_data:
+  pgadmin_data:
+  celerybeat-schedule:
+  prometheus_data:
+  grafana_data:
+
+# Nuevo: Secrets para seguridad
+secrets:
+  env_file:
+    file: .env.prod

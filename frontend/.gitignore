@@ -1,0 +1,42 @@
+# .gitignore
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Datos y volúmenes de Docker
+postgres_data/
+redis_data/
+*.sqlite
+*.db
+
+# Variables de entorno sensibles
+.env
+.env.local
+
+# Dependencias instaladas
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist
+dist-ssr
+*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

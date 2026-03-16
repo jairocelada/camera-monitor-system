@@ -1,0 +1,59 @@
+# ==========================================
+# ETAPA 1: Builder
+# ==========================================
+FROM python:3.13.1-slim-bookworm as builder
+
+WORKDIR /app
+
+# Instalar build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    libpcap-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar dependencias en directorio separado
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir --upgrade pip && \
+    pip install --user --no-cache-dir -r requirements.txt
+
+# ==========================================
+# ETAPA 2: Runtime mínimo
+# ==========================================
+FROM python:3.13.1-slim-bookworm
+
+# Solo runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    libpq5 \
+    iputils-ping \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Crear usuario no-root
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+
+WORKDIR /app
+
+# Copiar dependencias instaladas
+COPY --from=builder /root/.local /home/appuser/.local
+ENV PATH=/home/appuser/.local/bin:$PATH
+
+# Copiar código
+COPY . .
+
+# Permisos
+RUN chown -R appuser:appgroup /app
+USER appuser
+
+# Puerto
+EXPOSE 8000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+
+# Workers Uvicorn optimizados para producción
+# Fórmula: (2 x $num_cores) + 1
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4} --proxy-headers"]

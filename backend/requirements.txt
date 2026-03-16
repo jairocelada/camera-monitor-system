@@ -1,0 +1,49 @@
+# ==========================================
+# CORE - FastAPI y servidor
+# ==========================================
+fastapi==0.115.12          # ← Actualizado: mejor soporte Python 3.13
+uvicorn[standard]==0.34.0  # ← Actualizado: compatibilidad total 3.13
+python-dotenv==1.0.1       # Sin cambios (estable)
+
+# ==========================================
+# BASE DE DATOS - PostgreSQL async
+# ==========================================
+sqlalchemy==2.0.39         # ← Actualizado: mejoras async en 3.13
+asyncpg==0.30.0            # Sin cambios (última estable)
+alembic==1.15.1            # ← Actualizado: soporte SQLAlchemy 2.0.39
+psycopg2-binary==2.9.10    # Sin cambios (última estable)
+
+# ==========================================
+# REDIS Y CELERY - Colas y cache
+# ==========================================
+redis==5.2.1               # ← Actualizado: mejoras de conexión
+celery==5.4.0              # Sin cambios (última estable)
+
+# ==========================================
+# NETWORKING - Monitoreo de cámaras
+# ==========================================
+ping3==4.0.8               # Sin cambios (última estable)
+scapy==2.6.0               # ← Actualizado: soporte Python 3.13
+pysnmp==7.1.22             # ← Actualizado: mejoras de seguridad
+netaddr==1.3.0             # Sin cambios (última estable)
+
+# ==========================================
+# SEGURIDAD - JWT y passwords
+# ==========================================
+python-jose[cryptography]==3.4.0  # ← Actualizado: algoritmos modernos
+passlib[bcrypt]==1.7.4            # Sin cambios (última estable)
+python-multipart==0.0.20          # ← Actualizado: mejoras parsing
+
+# ==========================================
+# UTILIDADES - Validación y HTTP
+# ==========================================
+pydantic==2.10.6             # ← Actualizado: mejor performance 3.13
+pydantic-settings==2.8.1      # ← Actualizado: integración Pydantic v2
+httpx==0.28.1                # ← Actualizado: cliente HTTP moderno
+
+# ==========================================
+# NUEVO: Monitoreo y métricas (recomendado 2026)
+# ==========================================
+prometheus-client==0.21.1    # Métricas para observabilidad
+structlog==25.1.0            # Logging estructurado moderno
+orjson==3.10.15              # JSON más rápido (opcional pero recomendado)
